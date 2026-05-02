@@ -268,19 +268,39 @@ END //
 -- AUTOMATION TRIGGERS
 -- =============================================================================
 
-CREATE TRIGGER trg_complete_appointment_on_record
+CREATE TRIGGER trg_medical_record_automation
 AFTER INSERT ON medical_records
 FOR EACH ROW
 BEGIN
-    UPDATE appointments SET status = 'Completed' WHERE appt_id = NEW.appt_id;
+    -- Kiểm tra nếu bệnh án này gắn với một cuộc hẹn (appt_id)
+    IF NEW.appt_id IS NOT NULL THEN
+        UPDATE appointments 
+        SET status = 'Completed', 
+            completed_at = NOW() -- Update completed time and status at the same time
+        WHERE appt_id = NEW.appt_id;
+    END IF;
+
 END //
 
 CREATE TRIGGER trg_release_bed_after_payment
 AFTER UPDATE ON invoices
 FOR EACH ROW
 BEGIN
-    IF NEW.payment_status = 'Paid' THEN
-        UPDATE beds b JOIN admissions a ON b.bed_id = a.bed_id SET b.status = 'Available' WHERE a.admission_id = NEW.admission_id;
+	-- 1. Check if the status changes to 'Paid' 
+	-- and this bill must belong to a hospital admission case (admission_id is not NULL)
+    IF NEW.payment_status = 'Paid' AND NEW.admission_id IS NOT NULL THEN
+        
+        -- 2. Update the bed status to Available
+        UPDATE beds 
+        SET status = 'Available' 
+        WHERE bed_id = (SELECT bed_id FROM admissions WHERE admission_id = NEW.admission_id);
+        
+        -- 3. (Optional) Update always updates the library status and publication date
+        UPDATE admissions 
+        SET status = 'Discharged', 
+            discharge_date = NOW() 
+        WHERE admission_id = NEW.admission_id;
+
     END IF;
 END //
 
