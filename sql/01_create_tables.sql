@@ -79,7 +79,7 @@ CREATE TABLE beds (
     bed_id INT PRIMARY KEY, 
     bed_code VARCHAR(20), 
     room_id INT, 
-    status VARCHAR(20), 
+    status ENUM('Available', 'Occupied', 'Cleaning', 'Maintenance') DEFAULT 'Available', 
     FOREIGN KEY (room_id) REFERENCES rooms(room_id)
 );
 
@@ -113,8 +113,9 @@ CREATE TABLE appointments (
     appt_id INT PRIMARY KEY AUTO_INCREMENT, 
     patient_id INT, 
     doctor_id INT, 
-    appt_date DATETIME, 
-    status VARCHAR(20), 
+    appt_date DATETIME,
+    completed_at DATETIME NULL,
+    status ENUM('Scheduled', 'CheckedIn', 'In-Progress', 'Completed', 'Cancelled') DEFAULT 'Scheduled', 
     FOREIGN KEY (patient_id) REFERENCES patients(patient_id), 
     FOREIGN KEY (doctor_id) REFERENCES doctors(doctor_id)
 );
