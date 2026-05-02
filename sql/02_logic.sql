@@ -207,16 +207,16 @@ END //
 
 CREATE PROCEDURE sp_get_doctor_schedule_flow(IN p_doctor_id INT)
 BEGIN
-    SELECT 'Active' AS flow_type, p.full_name, a.appt_date FROM appointments a JOIN patients p ON a.patient_id = p.patient_id
-    WHERE a.doctor_id = p_doctor_id AND a.status IN ('CheckedIn', 'In-Progress') AND a.appt_date <= NOW() AND DATE_ADD(a.appt_date, INTERVAL 30 MINUTE) >= NOW()
+    (SELECT 'Active' AS flow_type, p.full_name, a.appt_date FROM appointments a JOIN patients p ON a.patient_id = p.patient_id
+    WHERE a.doctor_id = p_doctor_id AND a.status IN ('CheckedIn', 'In-Progress') AND a.appt_date <= NOW() AND DATE_ADD(a.appt_date, INTERVAL 30 MINUTE) >= NOW())
     UNION ALL
-    SELECT 'Next' AS flow_type, p.full_name, a.appt_date FROM appointments a JOIN patients p ON a.patient_id = p.patient_id
-    WHERE a.doctor_id = p_doctor_id AND a.status IN ('Scheduled', 'CheckedIn') AND a.appt_date > NOW() ORDER BY appt_date ASC LIMIT 1;
+    (SELECT 'Next' AS flow_type, p.full_name, a.appt_date FROM appointments a JOIN patients p ON a.patient_id = p.patient_id
+    WHERE a.doctor_id = p_doctor_id AND a.status IN ('Scheduled', 'CheckedIn') AND a.appt_date > NOW() ORDER BY appt_date ASC LIMIT 1);
 END //
 
 CREATE PROCEDURE sp_discharge_patient(IN p_admission_id INT, IN p_status VARCHAR(20))
 BEGIN
-    UPDATE admissions SET discharge_date = NOW(), discharge_status_id = p_status WHERE admission_id = p_admission_id;
+    UPDATE admissions SET discharge_date = NOW(), discharge_status = p_status WHERE admission_id = p_admission_id;
 END //
 
 -- 4. FINANCE (With RBAC)
@@ -297,7 +297,7 @@ BEGIN
         
         -- 3. (Optional) Update always updates the library status and publication date
         UPDATE admissions 
-        SET status = 'Discharged', 
+        SET discharge_status = 'Discharged', 
             discharge_date = NOW() 
         WHERE admission_id = NEW.admission_id;
 
@@ -316,7 +316,7 @@ AFTER INSERT ON presc_details
 FOR EACH ROW
 BEGIN
     UPDATE invoices i
-    JOIN medical_records mr ON i.appt_id = mr.appt_id
+    JOIN medical_records mr ON (i.appt_id = mr.appt_id OR i.admission_id = mr.admission_id)
     JOIN prescriptions pr ON mr.record_id = pr.record_id
     SET i.total_amount = fn_calculate_total_amount(NEW.presc_id)
     WHERE pr.presc_id = NEW.presc_id;
@@ -327,7 +327,7 @@ AFTER UPDATE ON presc_details
 FOR EACH ROW
 BEGIN
     UPDATE invoices i
-    JOIN medical_records mr ON i.appt_id = mr.appt_id
+    JOIN medical_records mr ON (i.appt_id = mr.appt_id OR i.admission_id = mr.admission_id)
     JOIN prescriptions pr ON mr.record_id = pr.record_id
     SET i.total_amount = fn_calculate_total_amount(NEW.presc_id)
     WHERE pr.presc_id = NEW.presc_id;
@@ -338,7 +338,7 @@ AFTER DELETE ON presc_details
 FOR EACH ROW
 BEGIN
     UPDATE invoices i
-    JOIN medical_records mr ON i.appt_id = mr.appt_id
+    JOIN medical_records mr ON (i.appt_id = mr.appt_id OR i.admission_id = mr.admission_id)
     JOIN prescriptions pr ON mr.record_id = pr.record_id
     SET i.total_amount = fn_calculate_total_amount(OLD.presc_id)
     WHERE pr.presc_id = OLD.presc_id;
