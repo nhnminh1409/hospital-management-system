@@ -127,7 +127,7 @@ CREATE TABLE admissions (
     bed_id INT, 
     admission_date DATETIME, 
     discharge_date DATETIME, 
-    discharge_status_id VARCHAR(255),
+    discharge_status VARCHAR(255),
     FOREIGN KEY (patient_id) REFERENCES patients(patient_id), 
     FOREIGN KEY (doctor_id) REFERENCES doctors(doctor_id), 
     FOREIGN KEY (bed_id) REFERENCES beds(bed_id)
