@@ -6,6 +6,16 @@
 USE hospital_db;
 
 -- =============================================================================
+-- SCHEMA EXTENSION
+-- Add net_amount column to invoices to store the post-insurance amount.
+-- Kept here (not in 01_create_tables) to avoid altering the base schema file.
+-- Populated by sp_pay_invoice at the moment of payment.
+-- =============================================================================
+ALTER TABLE invoices
+    ADD COLUMN net_amount DECIMAL(10,2) NULL DEFAULT NULL
+    COMMENT 'Net amount after insurance deduction; set by sp_pay_invoice on payment';
+
+-- =============================================================================
 -- INDEXES CONFIGURATION
 -- =============================================================================
 
@@ -87,7 +97,8 @@ SELECT
     a.status AS appt_status
 FROM appointments a
 JOIN patients p ON a.patient_id = p.patient_id
-JOIN staff s ON a.doctor_id = s.staff_id
+JOIN doctors d ON a.doctor_id = d.doctor_id   -- Fixed: appointments.doctor_id references doctors.doctor_id, not staff.staff_id
+JOIN staff s ON d.staff_id = s.staff_id
 ORDER BY a.appt_date ASC;
 
 -- 2. VIEW FOR DOCTORS
@@ -101,9 +112,11 @@ SELECT
     p.full_name AS patient_name,
     ADDTIME(TIME(a.appt_date), '00:30:00') AS end_time,
     CASE 
-        WHEN a.status = 'Completed' THEN 'Examined'
-        WHEN a.status = 'Scheduled' THEN 'Confirmed'
-        WHEN a.status = 'Cancelled' THEN 'Cancelled'
+        WHEN a.status = 'Completed'   THEN 'Examined'
+        WHEN a.status = 'Scheduled'   THEN 'Confirmed'
+        WHEN a.status = 'CheckedIn'   THEN 'Checked In'   -- Fixed: missing branch
+        WHEN a.status = 'In-Progress' THEN 'In Progress'  -- Fixed: missing branch
+        WHEN a.status = 'Cancelled'   THEN 'Cancelled'
         ELSE 'Pending'
     END AS display_status
 FROM appointments a
@@ -128,25 +141,33 @@ LEFT JOIN admissions adm ON b.bed_id = adm.bed_id AND adm.discharge_date IS NULL
 LEFT JOIN patients p ON adm.patient_id = p.patient_id;
 
 -- 4. VIEW FOR ACCOUNTANT
+-- Fixed: original used INNER JOIN on appointments, which excluded all admission-based invoices (appt_id IS NULL)
+-- Updated: net_pay now prefers the stored net_amount (set at payment time by sp_pay_invoice);
+--          falls back to fn_calculate_net_pay for any legacy rows that predate Option B.
 CREATE OR REPLACE VIEW view_detailed_patient_bill AS
 SELECT
     i.invoice_id,
     i.invoice_date,
-    p.full_name AS patient_name,
+    COALESCE(p_appt.full_name, p_adm.full_name) AS patient_name,
     mr.diagnosis AS doctor_diagnosis,
     m.med_name AS medicine_name,
     pd.dosage,
     i.total_amount AS gross_amount,
     IFNULL(ins.coverage_rate, 0) AS insurance_rate,
-    fn_calculate_net_pay(i.total_amount, IFNULL(ins.coverage_rate, 0)) AS net_pay
+    COALESCE(
+        i.net_amount,
+        fn_calculate_net_pay(i.total_amount, IFNULL(ins.coverage_rate, 0))
+    ) AS net_pay
 FROM invoices i
-JOIN appointments appt ON i.appt_id = appt.appt_id
-JOIN patients p ON appt.patient_id = p.patient_id
-LEFT JOIN insurance ins ON p.patient_id = ins.patient_id
-JOIN medical_records mr ON i.appt_id = mr.appt_id
-JOIN prescriptions pr ON mr.record_id = pr.record_id
-JOIN presc_details pd ON pr.presc_id = pd.presc_id
-JOIN medicines m ON pd.med_id = m.med_id
+LEFT JOIN appointments appt ON i.appt_id = appt.appt_id
+LEFT JOIN patients p_appt ON appt.patient_id = p_appt.patient_id
+LEFT JOIN admissions adm ON i.admission_id = adm.admission_id
+LEFT JOIN patients p_adm ON adm.patient_id = p_adm.patient_id
+LEFT JOIN insurance ins ON COALESCE(p_appt.patient_id, p_adm.patient_id) = ins.patient_id
+LEFT JOIN medical_records mr ON (i.appt_id = mr.appt_id OR i.admission_id = mr.admission_id)
+LEFT JOIN prescriptions pr ON mr.record_id = pr.record_id
+LEFT JOIN presc_details pd ON pr.presc_id = pd.presc_id
+LEFT JOIN medicines m ON pd.med_id = m.med_id
 WHERE i.payment_status = 'Paid';
 
 -- 5. VIEW FOR HUMAN RESOURCES
@@ -181,7 +202,8 @@ BEGIN
 END //
 
 -- 2. CLINICAL & TREATMENT
-CREATE PROCEDURE sp_create_prescription(IN p_record_id INT, IN p_patient_id INT, IN p_doctor_id INT, IN p_appointment_id INT, IN p_admission_id INT, OUT p_presc_id INT)
+-- Fixed: removed 3 unused parameters (p_patient_id, p_appointment_id, p_admission_id) that had no effect on the body
+CREATE PROCEDURE sp_create_prescription(IN p_record_id INT, IN p_doctor_id INT, OUT p_presc_id INT)
 BEGIN
     INSERT INTO prescriptions (record_id, doctor_id) VALUES (p_record_id, p_doctor_id);
     SET p_presc_id = LAST_INSERT_ID();
@@ -194,15 +216,35 @@ END //
 
 CREATE PROCEDURE sp_get_patient_history(IN p_patient_id INT)
 BEGIN
-    SELECT 'Profile' AS data_type, allergies, chronic_diseases, blood_type FROM patient_health_profile WHERE patient_id = p_patient_id;
-    SELECT m.record_id, m.diagnosis, m.symptoms, m.doctor_notes, a.appt_date FROM medical_records m LEFT JOIN appointments a ON m.appt_id = a.appt_id WHERE a.patient_id = p_patient_id ORDER BY a.appt_date DESC;
+    -- Return health profile
+    SELECT 'Profile' AS data_type, allergies, chronic_diseases, blood_type 
+    FROM patient_health_profile WHERE patient_id = p_patient_id;
+
+    -- Fixed: original WHERE a.patient_id on a LEFT JOINed table silently converted it to INNER JOIN,
+    -- causing all admission-based medical records (appt_id IS NULL) to be lost.
+    SELECT 
+        m.record_id, m.diagnosis, m.symptoms, m.doctor_notes,
+        COALESCE(a.appt_date, adm.admission_date) AS event_date,
+        CASE WHEN m.appt_id IS NOT NULL THEN 'Outpatient' ELSE 'Inpatient' END AS visit_type
+    FROM medical_records m
+    LEFT JOIN appointments a   ON m.appt_id      = a.appt_id
+    LEFT JOIN admissions   adm ON m.admission_id = adm.admission_id
+    WHERE a.patient_id = p_patient_id OR adm.patient_id = p_patient_id
+    ORDER BY event_date DESC;
 END //
 
 -- 3. SCHEDULING & ADMISSION
+-- Fixed: was querying staff directly and comparing staff_id against appointments.doctor_id
+-- appointments.doctor_id is FK to doctors.doctor_id, not staff.staff_id
 CREATE PROCEDURE sp_find_available_doctors(IN p_date DATE)
 BEGIN
-    SELECT s.staff_id, s.full_name, d.dept_name FROM staff s JOIN departments d ON s.dept_id = d.dept_id 
-    WHERE s.staff_id NOT IN (SELECT DISTINCT doctor_id FROM appointments WHERE DATE(appt_date) = p_date);
+    SELECT s.staff_id, s.full_name, d.dept_name, doc.specialty
+    FROM staff s
+    JOIN departments d ON s.dept_id = d.dept_id
+    JOIN doctors doc ON doc.staff_id = s.staff_id
+    WHERE doc.doctor_id NOT IN (
+        SELECT DISTINCT doctor_id FROM appointments WHERE DATE(appt_date) = p_date
+    );
 END //
 
 CREATE PROCEDURE sp_get_doctor_schedule_flow(IN p_doctor_id INT)
@@ -220,14 +262,47 @@ BEGIN
 END //
 
 -- 4. FINANCE (With RBAC)
+-- Updated (Option B): sp_pay_invoice now resolves the patient linked to this invoice,
+-- looks up their active insurance coverage_rate, then uses fn_calculate_net_pay to
+-- compute and persist net_amount alongside the Paid status in a single UPDATE.
 CREATE PROCEDURE sp_pay_invoice(IN p_invoice_id INT, IN p_executor_id INT)
 BEGIN
-    DECLARE v_role_name VARCHAR(50);
-    SELECT r.role_name INTO v_role_name FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = p_executor_id;
+    DECLARE v_role_name  VARCHAR(50);
+    DECLARE v_gross      DECIMAL(15,2) DEFAULT 0;
+    DECLARE v_patient_id INT           DEFAULT NULL;
+    DECLARE v_coverage   DECIMAL(3,2)  DEFAULT 0.00;
+
+    -- RBAC: only users with the Accountant role may process payments
+    SELECT r.role_name INTO v_role_name
+    FROM users u JOIN roles r ON u.role_id = r.role_id
+    WHERE u.user_id = p_executor_id;
+
     IF v_role_name = 'Accountant' THEN
-        UPDATE invoices SET payment_status = 'Paid' WHERE invoice_id = p_invoice_id;
+        -- Retrieve gross amount and resolve the patient for this invoice
+        -- (could be linked via an outpatient appointment or an inpatient admission)
+        SELECT i.total_amount,
+               COALESCE(appt.patient_id, adm.patient_id)
+        INTO v_gross, v_patient_id
+        FROM invoices i
+        LEFT JOIN appointments appt ON i.appt_id      = appt.appt_id
+        LEFT JOIN admissions   adm  ON i.admission_id = adm.admission_id
+        WHERE i.invoice_id = p_invoice_id;
+
+        -- Look up the patient's active insurance coverage rate (defaults to 0 if none)
+        SELECT IFNULL(coverage_rate, 0.00) INTO v_coverage
+        FROM insurance
+        WHERE patient_id = v_patient_id
+          AND expiry_date >= CURDATE()
+        LIMIT 1;
+
+        -- Mark as Paid and store net_amount = fn_calculate_net_pay(gross, coverage_rate)
+        UPDATE invoices
+        SET payment_status = 'Paid',
+            net_amount     = fn_calculate_net_pay(v_gross, v_coverage)
+        WHERE invoice_id = p_invoice_id;
     ELSE
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only Accountants';
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Permission Denied: Only Accountants can process payments';
     END IF;
 END //
 
@@ -236,7 +311,13 @@ BEGIN
     DECLARE v_role_name VARCHAR(50);
     SELECT r.role_name INTO v_role_name FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = p_executor_id;
     IF v_role_name IN ('Accountant', 'Admin') THEN
-        SELECT SUM(total_amount) AS total_revenue, COUNT(invoice_id) AS total_invoices FROM invoices WHERE MONTH(invoice_date) = p_month AND YEAR(invoice_date) = p_year AND payment_status = 'Paid';
+        -- Use net_amount (post-insurance) when available; fall back to total_amount for legacy rows
+        SELECT SUM(COALESCE(net_amount, total_amount)) AS total_revenue,
+               COUNT(invoice_id) AS total_invoices
+        FROM invoices
+        WHERE MONTH(invoice_date) = p_month
+          AND YEAR(invoice_date)  = p_year
+          AND payment_status = 'Paid';
     ELSE
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied';
     END IF;
@@ -247,10 +328,10 @@ CREATE PROCEDURE sp_add_new_staff(IN p_full_name VARCHAR(100), IN p_dob DATE, IN
 BEGIN
     DECLARE v_role_name VARCHAR(50);
     SELECT r.role_name INTO v_role_name FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = p_executor_id;
-    IF v_role_name = 'HR' THEN
+    IF v_role_name = 'Admin' THEN  -- Fixed: role 'HR' does not exist in roles table; only 'Admin' can manage staff
         INSERT INTO staff (full_name, dob, gender, phone_number, email, user_id, dept_id) VALUES (p_full_name, p_dob, p_gender, p_phone, p_email, p_user_id, p_dept_id);
     ELSE
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only HR';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only Admin can add new staff';
     END IF;
 END //
 
@@ -272,7 +353,7 @@ CREATE TRIGGER trg_medical_record_automation
 AFTER INSERT ON medical_records
 FOR EACH ROW
 BEGIN
-    -- Kiểm tra nếu bệnh án này gắn với một cuộc hẹn (appt_id)
+    -- If this medical record is linked to an appointment, mark it as Completed
     IF NEW.appt_id IS NOT NULL THEN
         UPDATE appointments 
         SET status = 'Completed', 
@@ -295,7 +376,7 @@ BEGIN
         SET status = 'Available' 
         WHERE bed_id = (SELECT bed_id FROM admissions WHERE admission_id = NEW.admission_id);
         
-        -- 3. (Optional) Update always updates the library status and publication date
+        -- 3. Update admission status and set discharge timestamp
         UPDATE admissions 
         SET discharge_status = 'Discharged', 
             discharge_date = NOW() 
@@ -308,7 +389,8 @@ CREATE TRIGGER trg_audit_appointment_creation
 AFTER INSERT ON appointments
 FOR EACH ROW
 BEGIN
-    INSERT INTO audit_logs (user_id, action, timestamp) VALUES (NULL, CONCAT('New appointment created for patient_id: ', NEW.patient_id), NOW());
+    INSERT INTO audit_logs (user_id, action, timestamp) 
+    VALUES (IFNULL(@current_user_id, NULL), CONCAT('New appointment created for patient_id: ', NEW.patient_id), NOW());
 END //
 
 CREATE TRIGGER trg_presc_detail_insert
