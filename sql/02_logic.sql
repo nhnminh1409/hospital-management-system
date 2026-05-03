@@ -194,6 +194,8 @@ DELIMITER //
 CREATE PROCEDURE sp_register_patient(IN p_full_name VARCHAR(100), IN p_dob DATE, IN p_gender VARCHAR(10), IN p_phone VARCHAR(15), IN p_email VARCHAR(100))
 BEGIN
     INSERT INTO patients (full_name, dob, gender, phone, email) VALUES (p_full_name, p_dob, p_gender, p_phone, p_email);
+    INSERT INTO audit_logs (user_id, action, timestamp) 
+    VALUES (IFNULL(@current_user_id, NULL), CONCAT('Registered new patient: ', p_full_name), NOW());
 END //
 
 CREATE PROCEDURE sp_search_patient(IN p_keyword VARCHAR(100))
@@ -300,6 +302,9 @@ BEGIN
         SET payment_status = 'Paid',
             net_amount     = fn_calculate_net_pay(v_gross, v_coverage)
         WHERE invoice_id = p_invoice_id;
+
+        INSERT INTO audit_logs (user_id, action, timestamp) 
+        VALUES (p_executor_id, CONCAT('Processed payment for invoice #', p_invoice_id), NOW());
     ELSE
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'Permission Denied: Only Accountants can process payments';
@@ -328,10 +333,61 @@ CREATE PROCEDURE sp_add_new_staff(IN p_full_name VARCHAR(100), IN p_dob DATE, IN
 BEGIN
     DECLARE v_role_name VARCHAR(50);
     SELECT r.role_name INTO v_role_name FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = p_executor_id;
-    IF v_role_name = 'Admin' THEN  -- Fixed: role 'HR' does not exist in roles table; only 'Admin' can manage staff
+    IF v_role_name IN ('Admin', 'Human Resource (HR)') THEN  
         INSERT INTO staff (full_name, dob, gender, phone_number, email, user_id, dept_id) VALUES (p_full_name, p_dob, p_gender, p_phone, p_email, p_user_id, p_dept_id);
+        INSERT INTO audit_logs (user_id, action, timestamp) 
+        VALUES (p_executor_id, CONCAT('Added new staff member: ', p_full_name), NOW());
     ELSE
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only Admin can add new staff';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only Admin or HR can add new staff';
+    END IF;
+END //
+
+CREATE PROCEDURE sp_delete_staff(IN p_staff_id INT, IN p_executor_id INT)
+BEGIN
+    DECLARE v_role_name VARCHAR(50);
+    DECLARE v_staff_name VARCHAR(100);
+    
+    SELECT r.role_name INTO v_role_name FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = p_executor_id;
+    
+    IF v_role_name IN ('Admin', 'Human Resource (HR)') THEN
+        SELECT full_name INTO v_staff_name FROM staff WHERE staff_id = p_staff_id;
+        
+        -- Delete doctor record if exists
+        DELETE FROM doctors WHERE staff_id = p_staff_id;
+        -- Delete staff record
+        DELETE FROM staff WHERE staff_id = p_staff_id;
+        
+        INSERT INTO audit_logs (user_id, action, timestamp) 
+        VALUES (p_executor_id, CONCAT('Deleted staff member: ', v_staff_name), NOW());
+    ELSE
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only Admin or HR can delete staff';
+    END IF;
+END //
+
+CREATE PROCEDURE sp_delete_appointment(IN p_appt_id INT, IN p_executor_id INT)
+BEGIN
+    DECLARE v_role_name VARCHAR(50);
+    DECLARE v_patient_name VARCHAR(100);
+    
+    SELECT r.role_name INTO v_role_name FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = p_executor_id;
+    
+    IF v_role_name IN ('Admin', 'Receptionist') THEN
+        -- Check if appointment exists and get patient name for log
+        SELECT p.full_name INTO v_patient_name 
+        FROM appointments a 
+        JOIN patients p ON a.patient_id = p.patient_id 
+        WHERE a.appt_id = p_appt_id;
+        
+        -- Delete related invoice first
+        DELETE FROM invoices WHERE appt_id = p_appt_id;
+        
+        -- Delete the appointment
+        DELETE FROM appointments WHERE appt_id = p_appt_id;
+        
+        INSERT INTO audit_logs (user_id, action, timestamp) 
+        VALUES (p_executor_id, CONCAT('Deleted appointment for patient: ', v_patient_name), NOW());
+    ELSE
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Permission Denied: Only Admin or Receptionist can delete appointments';
     END IF;
 END //
 
@@ -391,6 +447,14 @@ FOR EACH ROW
 BEGIN
     INSERT INTO audit_logs (user_id, action, timestamp) 
     VALUES (IFNULL(@current_user_id, NULL), CONCAT('New appointment created for patient_id: ', NEW.patient_id), NOW());
+END //
+
+CREATE TRIGGER trg_audit_medical_record_creation
+AFTER INSERT ON medical_records
+FOR EACH ROW
+BEGIN
+    INSERT INTO audit_logs (user_id, action, timestamp) 
+    VALUES (IFNULL(@current_user_id, NULL), CONCAT('Created medical record for appt/adm: ', COALESCE(NEW.appt_id, NEW.admission_id)), NOW());
 END //
 
 CREATE TRIGGER trg_presc_detail_insert
