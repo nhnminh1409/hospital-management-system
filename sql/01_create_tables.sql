@@ -86,7 +86,7 @@ CREATE TABLE beds (
 CREATE TABLE insurance (
     insurance_id VARCHAR(20) PRIMARY KEY, 
     patient_id INT,
-    coverage_rate DECIMAL(3,2) DEFAULT 0.00,
+    coverage_rate DECIMAL(3,2) DEFAULT 0.00 CHECK (coverage_rate BETWEEN 0.00 AND 1.00),
     expiry_date DATE, 
     provider VARCHAR(100), 
     FOREIGN KEY (patient_id) REFERENCES patients(patient_id)
@@ -150,7 +150,7 @@ CREATE TABLE prescriptions (
     record_id INT, 
     doctor_id INT, 
     FOREIGN KEY (record_id) REFERENCES medical_records(record_id), 
-    FOREIGN KEY (doctor_id) REFERENCES staff(staff_id)
+    FOREIGN KEY (doctor_id) REFERENCES doctors(doctor_id)  -- Fixed: was incorrectly referencing staff(staff_id)
 );
 
 CREATE TABLE presc_details (
@@ -169,7 +169,7 @@ CREATE TABLE invoices (
     admission_id INT NULL,
     invoice_date DATETIME,
     total_amount DECIMAL(10,2), 
-    payment_status VARCHAR(20), 
+    payment_status ENUM('Unpaid', 'Paid', 'Cancelled', 'Refunded') DEFAULT 'Unpaid',  -- Fixed: was VARCHAR(20)
     FOREIGN KEY (appt_id) REFERENCES appointments(appt_id), 
     FOREIGN KEY (admission_id) REFERENCES admissions(admission_id)
 );
