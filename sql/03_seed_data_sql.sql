@@ -4,7 +4,7 @@ USE hospital_db;
 -- REFERENCE DATA
 -- ======================================================
 INSERT INTO roles (role_id, role_name) VALUES 
-(1, 'Admin'), (2, 'Doctor'), (3, 'Receptionist'), (4, 'Accountant');
+(1, 'Admin'), (2, 'Doctor'), (3, 'Receptionist'), (4, 'Accountant'), (5, 'Human Resource (HR)');
 
 INSERT INTO departments (dept_id, dept_name) VALUES 
 (1, 'Internal Medicine'), (2, 'Pediatrics'), (3, 'Obstetrics and Gynecology'), 
@@ -16,7 +16,8 @@ INSERT INTO departments (dept_id, dept_name) VALUES
 INSERT INTO users (user_id, username, password_hash, role_id) VALUES 
 (1, 'recep_alice', 'hash123', 3),
 (2, 'acc_bob', 'hash123', 4),
-(23, 'admin_super', 'super_secure_hash_123', 1);
+(23, 'admin_super', 'super_secure_hash_123', 1),
+(25, 'hr_alima', 'hr123',5);
 
 -- Users for 20 Doctors (IDs 3 to 22)
 INSERT INTO users (user_id, username, password_hash, role_id)
@@ -60,7 +61,8 @@ INSERT INTO staff (staff_id, full_name, dob, gender, phone_number, email, user_i
 (20, 'Nancy White', '1979-01-20', 'Female', '0911000020', 'nancy.w@hosp.com', 20, 6),
 (21, 'Anthony Harris', '1985-04-12', 'Male', '0911000021', 'anthony.h@hosp.com', 21, 6),
 (22, 'Lisa Martin', '1983-06-30', 'Female', '0911000022', 'lisa.m@hosp.com', 22, 6),
-(23, 'Justin Bieber', '1990-07-24', 'Male', '0823468445', 'justin.b@hosp.com',23,7);
+(23, 'Justin Bieber', '1990-07-24', 'Male', '0823468445', 'justin.b@hosp.com',23,7),
+(25, 'Alice Mason', '1995-08-10', 'Female', '091100456', 'alima@hosp.com', 25, 7);
 
 -- ======================================================
 -- 5. DOCTORS (20 Doctors assigned to 6 Specialties)
