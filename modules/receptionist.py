@@ -26,6 +26,20 @@ def _set_appt_status(appt_id: int, status: str):
         conn.commit(); cur.close(); conn.close()
 
 
+def _delete_appointment_ui(appt_id: int, patient_name: str):
+    """Internal helper to call deletion procedure with session state check."""
+    executor_id = st.session_state.get("user_id")
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.callproc("sp_delete_appointment", [appt_id, executor_id])
+        conn.commit(); cur.close(); conn.close()
+        st.success(f"Appointment for {patient_name} deleted.")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Failed to delete: {e}")
+
+
 def _register_patient_form():
     """Inline form to create a new patient record and basic health profile."""
     with st.form("form_new_patient", clear_on_submit=True):
@@ -58,6 +72,10 @@ def _register_patient_form():
             try:
                 conn = get_connection()
                 cur  = conn.cursor()
+                # Set session variable for audit log
+                executor_id = st.session_state.get("user_id")
+                if executor_id:
+                    cur.execute("SET @current_user_id = %s", (executor_id,))
                 cur.callproc("sp_register_patient",
                              [name, str(dob), gender, phone, email])
                 conn.commit()
@@ -321,13 +339,19 @@ def run():
                 c2.write(f"🩺 {a['doctor_name']}")
                 c3.write(f"🕐 {a['appt_date'].strftime('%H:%M')}  {icon} {label}")
                 if a["status"] == "Scheduled":
-                    if c4.button("Check In", key=f"t2ci_{a['appt_id']}"):
+                    c1b, c2b = c4.columns(2)
+                    if c1b.button("Check In", key=f"t2ci_{a['appt_id']}"):
                         _set_appt_status(a["appt_id"], "CheckedIn")
                         st.rerun()
+                    if c2b.button("🗑️", key=f"t2del_{a['appt_id']}", help="Delete Appointment"):
+                        _delete_appointment_ui(a["appt_id"], a["patient_name"])
                 elif a["status"] == "CheckedIn":
-                    if c4.button("In Progress", key=f"t2ip_{a['appt_id']}"):
+                    c1b, c2b = c4.columns(2)
+                    if c1b.button("In Progress", key=f"t2ip_{a['appt_id']}"):
                         _set_appt_status(a["appt_id"], "In-Progress")
                         st.rerun()
+                    if c2b.button("🗑️", key=f"t2del_{a['appt_id']}", help="Delete Appointment"):
+                        _delete_appointment_ui(a["appt_id"], a["patient_name"])
             st.caption(f"Total: {len(filtered)} appointment(s) shown.")
         else:
             st.info("No appointments scheduled for today.")
