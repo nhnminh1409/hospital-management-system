@@ -130,6 +130,19 @@ def show_login_page():
                             st.session_state["doctor_id"] = doc_id
                         else:
                             st.warning("Your account is not linked to any doctor record.")
+                    
+                    # Record login event in audit_logs
+                    try:
+                        c_log = get_connection()
+                        cu_log = c_log.cursor()
+                        cu_log.execute(
+                            "INSERT INTO audit_logs (user_id, action, timestamp) VALUES (%s, 'User Logged In', NOW())",
+                            (user["user_id"],)
+                        )
+                        c_log.commit(); cu_log.close(); c_log.close()
+                    except:
+                        pass # Don't block login if logging fails
+                    
                     st.rerun()
                 else:
                     st.error("Incorrect username or password. Please try again.")
@@ -139,7 +152,8 @@ def show_login_page():
             st.markdown("""
 | Role | Username | Password |
 |------|----------|----------|
-| Admin / HR | `admin_super` | `super_secure_hash_123` |
+| Admin | `admin_super` | `super_secure_hash_123` |
+| HR | `hr_alima` | `hr123` |
 | Doctor | `dr_james_wilson` | `hash123` |
 | Receptionist | `recep_alice` | `hash123` |
 | Accountant | `acc_bob` | `hash123` |
@@ -199,11 +213,42 @@ else:
 
     # Route to the correct module based on authenticated role
     if role == "Admin":
-        st.title(f"🏥 Welcome, {full_name}")
-        show_home_stats()
-        st.markdown("---")
-        from modules import hr
-        hr.run()
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🛡️ Super Admin Control")
+        admin_mode = st.sidebar.selectbox("Access Module:", [
+            "⚙️ Admin Dashboard",
+            "👥 HR & Staff",
+            "🩺 Doctor View",
+            "🗂️ Receptionist View",
+            "💰 Accountant View"
+        ])
+
+        if admin_mode == "⚙️ Admin Dashboard":
+            from modules import admin
+            admin.run()
+        
+        elif admin_mode == "👥 HR & Staff":
+            from modules import hr
+            hr.run()
+
+        elif admin_mode == "🩺 Doctor View":
+            if "doctor_id" not in st.session_state:
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT doctor_id FROM doctors LIMIT 1")
+                row = cur.fetchone()
+                if row: st.session_state["doctor_id"] = row[0]
+                cur.close(); conn.close()
+            from modules import doctor
+            doctor.run()
+
+        elif admin_mode == "🗂️ Receptionist View":
+            from modules import receptionist
+            receptionist.run()
+
+        elif admin_mode == "💰 Accountant View":
+            from modules import accountant
+            accountant.run()
 
     elif role == "Doctor":
         from modules import doctor
@@ -216,6 +261,10 @@ else:
     elif role == "Accountant":
         from modules import accountant
         accountant.run()
+
+    elif role == "Human Resource (HR)":
+        from modules import hr
+        hr.run()
 
     else:
         st.warning(f"Role **'{role}'** does not have a configured dashboard.")
