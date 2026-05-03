@@ -3,8 +3,8 @@ from mysql.connector import Error
 
 # Database Configuration Constants
 DB_HOST = "127.0.0.1"
-DB_USER = "root"
-DB_PASSWORD = "Ngminh@1409"
+DB_USER = "root" #Update your user
+DB_PASSWORD = "pwd" # Update your password here
 DB_PORT = 3307
 DB_NAME = "hospital_db" # Update this to your actual database name
 
