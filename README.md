@@ -36,6 +36,30 @@ A robust, enterprise-grade Hospital Management System built with **Python**, **S
 
 ---
 
+## 📂 Project Structure
+```text
+HOSPITAL-MANAGEMENT-SYSTEM/
+|-- app.py              # Application entry point & routing
+|-- config.py           # Database connection configuration
+|-- backup.py           # Automated database backup utility
+|-- requirements.txt    # Python dependency list
+|-- README.md           # Project documentation
+|-- .gitignore          # Git exclusion rules
+|-- database_backups/   # Directory for stored SQL backups
+|-- modules/            # Role-specific UI modules
+|   |-- receptionist.py
+|   |-- doctor.py
+|   |-- accountant.py
+|   |-- hr.py
+|   |-- admin.py
+|-- sql/                # Database scripts
+|   |-- 01_create_tables.sql
+|   |-- 02_logic.sql
+|   |-- 03_seed_data_sql.sql
+```
+
+---
+
 ## 🛠️ Technology Stack
 - **Frontend/Logic:** [Streamlit](https://streamlit.io/) & Python 3.10+
 - **Database:** MySQL 8.0+ (Stored Procedures, Triggers, Views)
@@ -66,6 +90,17 @@ pip install -r requirements.txt
 # Run the application
 streamlit run app.py
 ```
+
+### 4. Database Backup & Maintenance
+The system includes an automated backup utility to ensure data persistence:
+```bash
+# Run the automated backup script
+python backup.py
+```
+This script will:
+- Attempt to use `mysqldump` for a professional-grade export.
+- Fallback to a **Pure Python** implementation if system dependencies are missing.
+- Save timestamped `.sql` files to the `database_backups/` directory.
 
 ---
 
