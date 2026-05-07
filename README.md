@@ -114,8 +114,16 @@ This script will:
 | **Receptionist** | `recep_alice` | `hash123` | Book and manage visits |
 | **Accountant** | `acc_bob` | `hash123` | Financial & insurance ops |
 
+### 🛠️ How to Remove Demo Credentials
+For production or clean evaluation, you can hide the demo credentials expander from the login page:
+1. Open `app.py`.
+2. Locate the section labeled `# Demo credentials`.
+3. Comment out or delete the code block starting from `with st.expander("🔑 Demo Credentials"):` (approx. lines 150-160).
+
+
 ---
 
 ## 📝 Project Status
 **Status:** Stable / Professionalized
+
 **Key Updates:** Enhanced RBAC, Multi-Prescription Session Locking, Delete Operations with Audit Trail, Master Login Tracking.
